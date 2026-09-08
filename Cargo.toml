@@ -1,0 +1,14 @@
+[package]
+name = "rs-consistenthash"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "A consistent hashing ring with virtual nodes, implemented using only the Rust standard library."
+repository = "https://github.com/kasapdev/rs-consistenthash"
+readme = "README.md"
+keywords = ["consistent-hashing", "hashing", "distributed-systems", "data-structures"]
+categories = ["data-structures", "algorithms"]
+
+[dependencies]
+# Intentionally zero external dependencies. std::collections::hash_map::DefaultHasher
+# and std::hash::Hasher/Hash provide everything needed for a solid ring implementation.
