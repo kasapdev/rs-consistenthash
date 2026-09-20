@@ -75,7 +75,7 @@ Add it to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-rs-consistenthash = "0.1"
+rs-consistenthash = "1.1"
 ```
 
 ## How it works
