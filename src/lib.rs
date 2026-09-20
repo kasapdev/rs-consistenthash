@@ -205,6 +205,56 @@ impl ConsistentHashRing {
         }
     }
 
+    /// Returns up to `n` distinct physical nodes for `key`, in preference
+    /// order: the key's owner (exactly what [`get_node`](Self::get_node)
+    /// returns) first, then the next distinct nodes walking clockwise around
+    /// the ring. This is the "preference list" used to place `n` replicas of
+    /// a key, as in Dynamo-style stores.
+    ///
+    /// Fewer than `n` nodes are returned when the ring has fewer than `n`
+    /// physical nodes, and the result is empty for `n == 0` or an empty ring.
+    /// Virtual nodes belonging to a node that was already collected are
+    /// skipped, so the returned nodes are always distinct.
+    ///
+    /// ```
+    /// use rs_consistenthash::ConsistentHashRing;
+    /// let mut ring = ConsistentHashRing::new(100);
+    /// for name in ["a", "b", "c", "d"] {
+    ///     ring.add_node(name);
+    /// }
+    /// let replicas = ring.get_nodes("user:42", 3);
+    /// assert_eq!(replicas.len(), 3);
+    /// assert_eq!(Some(replicas[0]), ring.get_node("user:42"));
+    /// ```
+    pub fn get_nodes(&self, key: &str, n: usize) -> Vec<&str> {
+        let limit = n.min(self.nodes.len());
+        let mut found: Vec<&str> = Vec::with_capacity(limit);
+        if limit == 0 {
+            return found;
+        }
+        let position = Self::hash_str(key);
+        // Clockwise from the key's position, then wrapping to the start.
+        let walk = self
+            .ring
+            .range(position..)
+            .chain(self.ring.range(..position));
+        for (_, name) in walk {
+            let name = name.as_str();
+            if !found.contains(&name) {
+                found.push(name);
+                if found.len() == limit {
+                    break;
+                }
+            }
+        }
+        found
+    }
+
+    /// Returns `true` if a physical node called `name` is in the ring.
+    pub fn contains_node(&self, name: &str) -> bool {
+        self.nodes.contains(name)
+    }
+
     /// Returns the number of distinct physical nodes currently in the ring.
     ///
     /// This is the count of physical nodes, not virtual nodes — see
@@ -454,5 +504,73 @@ mod tests {
         for i in 0..5000 {
             assert_eq!(ring.get_node(&format!("wrap-{i}")), Some("only"));
         }
+    }
+
+    #[test]
+    fn get_nodes_starts_with_the_owner_and_is_distinct() {
+        let mut ring = ConsistentHashRing::new(50);
+        for name in ["a", "b", "c", "d", "e"] {
+            ring.add_node(name);
+        }
+        for i in 0..500 {
+            let key = format!("key-{i}");
+            let nodes = ring.get_nodes(&key, 3);
+            assert_eq!(nodes.len(), 3, "key {key} should get 3 distinct nodes");
+            assert_eq!(Some(nodes[0]), ring.get_node(&key));
+            let unique: std::collections::HashSet<_> = nodes.iter().collect();
+            assert_eq!(
+                unique.len(),
+                3,
+                "nodes for {key} must be distinct: {nodes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn get_nodes_is_capped_by_the_number_of_physical_nodes() {
+        let mut ring = ConsistentHashRing::new(20);
+        assert!(ring.get_nodes("k", 3).is_empty(), "empty ring");
+        ring.add_node("a");
+        ring.add_node("b");
+        assert!(ring.get_nodes("k", 0).is_empty(), "n == 0");
+        assert_eq!(ring.get_nodes("k", 1).len(), 1);
+        let mut all = ring.get_nodes("k", 10);
+        all.sort_unstable();
+        assert_eq!(all, ["a", "b"]);
+    }
+
+    #[test]
+    fn get_nodes_next_replica_takes_over_when_the_owner_leaves() {
+        // The defining property of a preference list: if the owner is
+        // removed, the key's next-listed node becomes its new owner.
+        let mut ring = ConsistentHashRing::new(100);
+        for name in ["a", "b", "c", "d"] {
+            ring.add_node(name);
+        }
+        for i in 0..300 {
+            let key = format!("k{i}");
+            let prefs: Vec<String> = ring
+                .get_nodes(&key, 2)
+                .into_iter()
+                .map(String::from)
+                .collect();
+            let mut without_owner = ConsistentHashRing::new(100);
+            for name in ["a", "b", "c", "d"] {
+                if name != prefs[0] {
+                    without_owner.add_node(name);
+                }
+            }
+            assert_eq!(without_owner.get_node(&key), Some(prefs[1].as_str()));
+        }
+    }
+
+    #[test]
+    fn contains_node_tracks_membership() {
+        let mut ring = ConsistentHashRing::new(10);
+        assert!(!ring.contains_node("a"));
+        ring.add_node("a");
+        assert!(ring.contains_node("a"));
+        ring.remove_node("a");
+        assert!(!ring.contains_node("a"));
     }
 }
