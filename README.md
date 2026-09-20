@@ -49,6 +49,28 @@ ring.remove_node("cache-2");
 assert!(ring.get_node("user:42").is_some());
 ```
 
+### Replication: several owners per key
+
+`get_nodes(key, n)` returns up to `n` distinct physical nodes in preference
+order: the key's owner first (identical to `get_node`), then the next distinct
+nodes clockwise around the ring. This is the "preference list" used to place
+`n` replicas of a key, and the second entry is exactly who takes over if the
+owner leaves.
+
+```rust
+use rs_consistenthash::ConsistentHashRing;
+
+let mut ring = ConsistentHashRing::new(150);
+for name in ["cache-1", "cache-2", "cache-3", "cache-4"] {
+    ring.add_node(name);
+}
+
+let replicas = ring.get_nodes("user:42", 3); // e.g. ["cache-3", "cache-1", "cache-4"]
+assert_eq!(replicas.len(), 3);
+assert_eq!(Some(replicas[0]), ring.get_node("user:42"));
+assert!(ring.contains_node(replicas[1]));
+```
+
 Add it to your `Cargo.toml`:
 
 ```toml
